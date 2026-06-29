@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #FCFDFD;
+  --foreground: #0F172A;
+  
+  --surface: #FFFFFF;
+  --surface-hover: #F8FAFC;
+  --primary: #F97316;
+  --primary-hover: #EA580C;
+  --border: #E2E8F0;
+  
+  --radius: 2px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-border: var(--border);
+  --font-sans: 'Outfit', var(--font-geist-sans), sans-serif;
+  --font-mono: 'Outfit', var(--font-geist-sans), sans-serif;
+  
+  --radius-lg: 4px;
+  --radius-md: 2px;
+  --radius-sm: 1px;
+}
+
+body, input, button, select, textarea, pre, code, .font-mono {
+  font-family: 'Outfit', var(--font-geist-sans), sans-serif !important;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100dvh;
+}
+
+/* Liquid Glass Utility - Orange & White Premium */
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(249, 115, 22, 0.12);
+  box-shadow: 0 10px 30px -10px rgba(249, 115, 22, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Custom Scrollbar - Orange Theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(249, 115, 22, 0.15);
+  border-radius: var(--radius);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.3);
+}
+
+/* Infinite Marquee Ticker */
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-33.3333%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
+
+/* Dashboard Font Size Scale-up */
+.dashboard-container {
+  font-size: 1.05em;
+}
+.dashboard-container .text-xs {
+  font-size: 0.85rem !important; /* was 0.75rem */
+}
+.dashboard-container .text-\[10px\] {
+  font-size: 0.75rem !important; /* was 10px */
+}
+.dashboard-container .text-\[11px\] {
+  font-size: 0.8rem !important; /* was 11px */
+}
+.dashboard-container .text-sm {
+  font-size: 0.95rem !important; /* was 0.875rem */
+}
+.dashboard-container .text-2xl {
+  font-size: 1.625rem !important; /* was 1.5rem */
+}
+.dashboard-container .text-4xl {
+  font-size: 2.5rem !important; /* was 2.25rem */
+}

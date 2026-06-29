@@ -1,0 +1,272 @@
+'use server'
+
+import { createAdminClient, createClient } from './supabase/server'
+import { cookies } from 'next/headers'
+
+// Slug blacklist check
+const BLACKLIST = [
+  'admin',
+  'api',
+  'auth',
+  'login',
+  'register',
+  'join',
+  'dashboard',
+  'billing',
+  'support',
+  'public',
+  '_next',
+  'favicon.ico',
+]
+
+export async function registerTenantAction(prevState: any, formData: FormData) {
+  const companyName = formData.get('companyName') as string
+  const category = formData.get('category') as string
+  const slug = (formData.get('slug') as string)?.toLowerCase().trim()
+  const adminName = formData.get('adminName') as string
+  const email = formData.get('email') as string
+  const password = formData.get('password') as string
+
+  if (!companyName || !category || !slug || !adminName || !email || !password) {
+    return { error: 'All fields are required.' }
+  }
+
+  if (BLACKLIST.includes(slug)) {
+    return { error: 'This company slug is reserved.' }
+  }
+
+  const adminClient = createAdminClient()
+
+  // Check if company slug already exists
+  const { data: existingCompany } = await adminClient
+    .from('companies')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle()
+
+  if (existingCompany) {
+    return { error: 'This company slug is already registered.' }
+  }
+
+  // Create Auth User
+  const { data: authData, error: authError } = await adminClient.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        company_slug: slug,
+        role: 'Admin',
+      },
+    },
+  })
+
+  if (authError || !authData.user) {
+    return { error: authError?.message || 'Failed to register admin account.' }
+  }
+
+  const userId = authData.user.id
+
+  // Insert Company
+  const { data: company, error: companyError } = await adminClient
+    .from('companies')
+    .insert({
+      slug,
+      name: companyName,
+      category,
+      tier: 'free',
+      active_modules: ['attendance', 'tasks'],
+    })
+    .select()
+    .single()
+
+  if (companyError || !company) {
+    // Cleanup auth user on failure
+    await adminClient.auth.admin.deleteUser(userId)
+    return { error: 'Failed to create company data.' }
+  }
+
+  // Generate unique invite codes
+  const adminInvite = 'AD-' + Math.random().toString(36).substring(2, 8).toUpperCase()
+  const empInvite = 'EM-' + Math.random().toString(36).substring(2, 8).toUpperCase()
+
+  // Insert Roles
+  const { data: roles, error: rolesError } = await adminClient
+    .from('roles')
+    .insert([
+      { company_id: company.id, name: 'Admin', invite_code: adminInvite, is_admin: true, permissions: { all: true } },
+      { company_id: company.id, name: 'Employee', invite_code: empInvite, is_admin: false, permissions: { attendance: true, tasks: true } },
+    ])
+    .select()
+
+  if (rolesError || !roles) {
+    await adminClient.from('companies').delete().eq('id', company.id)
+    await adminClient.auth.admin.deleteUser(userId)
+    return { error: 'Failed to create role access groups.' }
+  }
+
+  const adminRole = roles.find((r) => r.is_admin)
+  if (!adminRole) {
+    return { error: 'Internal Error: Admin role not found.' }
+  }
+
+  // Insert Admin into users profile table
+  const { error: userError } = await adminClient.from('users').insert({
+    auth_id: userId,
+    company_id: company.id,
+    role_id: adminRole.id,
+    email,
+    full_name: adminName,
+    is_dummy_account: false,
+  })
+
+  if (userError) {
+    await adminClient.from('companies').delete().eq('id', company.id)
+    await adminClient.auth.admin.deleteUser(userId)
+    return { error: 'Failed to save admin user profile.' }
+  }
+
+  // Auto Sign In by setting cookies
+  const client = await createClient()
+  const { error: signInError } = await client.auth.signInWithPassword({ email, password })
+
+  if (signInError) {
+    return { error: 'Registration successful, please sign in manually.' }
+  }
+
+  return { success: true, slug }
+}
+
+export async function loginAdminAction(prevState: any, formData: FormData) {
+  let email = formData.get('email') as string
+  const password = formData.get('password') as string
+
+  if (!email || !password) {
+    return { error: 'Email and password are required.' }
+  }
+
+  // Intercept super-admin credentials
+  if (email.trim() === 'super-lankdev') {
+    email = 'super-lankdev@apex.local'
+
+    // Auto-create/seed the super admin user if they don't exist yet
+    const adminClient = createAdminClient()
+    const { data: existingUser } = await adminClient.auth.admin.listUsers()
+    const foundAdmin = existingUser?.users?.find(u => u.email === 'super-lankdev@apex.local')
+    if (!foundAdmin) {
+      const { error: seedError } = await adminClient.auth.admin.createUser({
+        email: 'super-lankdev@apex.local',
+        password: 'super-lankdev',
+        email_confirm: true,
+        user_metadata: {
+          role: 'super-admin',
+          company_slug: 'super-admin'
+        }
+      })
+      if (seedError) {
+        console.error('Failed to seed super admin:', seedError)
+      }
+    }
+  }
+
+  const client = await createClient()
+  const { data, error } = await client.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (error || !data.user) {
+    return { error: error?.message || 'Login failed. Please verify your email and password.' }
+  }
+
+  const companySlug = data.user.user_metadata?.company_slug
+
+  return { success: true, slug: companySlug }
+}
+
+export async function joinEmployeeAction(prevState: any, formData: FormData) {
+  const inviteCode = formData.get('inviteCode') as string
+  const fullName = formData.get('fullName') as string
+  const password = formData.get('password') as string
+
+  if (!inviteCode || !fullName || !password) {
+    return { error: 'All fields are required.' }
+  }
+
+  const adminClient = createAdminClient()
+
+  // 1. Look up role and company details
+  const { data: role, error: roleError } = await adminClient
+    .from('roles')
+    .select('*, companies(*)')
+    .eq('invite_code', inviteCode.trim().toUpperCase())
+    .maybeSingle()
+
+  if (roleError || !role) {
+    return { error: 'Invalid or expired invitation code.' }
+  }
+
+  const companiesData = role.companies as any
+  const companySlug = companiesData.slug
+  const companyId = role.company_id
+  const companyTier = companiesData.tier || 'free'
+
+  // Count current workspace members
+  const { count: currentMemberCount } = await adminClient
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+
+  const maxAllowed = companyTier === 'free' ? 15 : companyTier === 'pro' ? 100 : Infinity
+
+  if ((currentMemberCount || 0) >= maxAllowed) {
+    return { error: `Batas kuota karyawan untuk tingkat ${companyTier.toUpperCase()} (${maxAllowed} orang) telah tercapai. Silakan lakukan peningkatan paket langganan.` }
+  }
+
+  // 2. Generate pseudo-email
+  const generatedId = Math.random().toString(36).substring(2, 10)
+  const pseudoEmail = `${generatedId}@${companySlug}.local`
+
+  // 3. Create confirmed user via Admin API
+  const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
+    email: pseudoEmail,
+    password,
+    email_confirm: true,
+    user_metadata: {
+      company_slug: companySlug,
+      role: role.name,
+    },
+  })
+
+  if (createError || !newUser.user) {
+    return { error: createError?.message || 'Failed to register employee account.' }
+  }
+
+  // 4. Create profile entry
+  const { error: insertError } = await adminClient.from('users').insert({
+    auth_id: newUser.user.id,
+    company_id: companyId,
+    role_id: role.id,
+    email: pseudoEmail,
+    full_name: fullName,
+    is_dummy_account: false,
+  })
+
+  if (insertError) {
+    // Cleanup user
+    await adminClient.auth.admin.deleteUser(newUser.user.id)
+    return { error: 'Failed to create employee profile.' }
+  }
+
+  // 5. Authenticate session
+  const client = await createClient()
+  const { error: signInError } = await client.auth.signInWithPassword({
+    email: pseudoEmail,
+    password,
+  })
+
+  if (signInError) {
+    return { error: 'Registration completed. Please sign in using email: ' + pseudoEmail }
+  }
+
+  return { success: true, slug: companySlug }
+}
